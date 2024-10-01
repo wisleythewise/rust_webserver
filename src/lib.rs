@@ -17,11 +17,18 @@ struct Worker {
 impl Worker {
     fn new(id: usize, reciever: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
         let thread = thread::spawn(move || loop {
-            let job = reciever.lock().unwrap().recv().unwrap();
+            let msg = reciever.lock().unwrap().recv();
 
-            println!("Worker {id} got a job; executing.");
-
-            job();
+            match msg {
+                Ok(job) => {
+                    println!("Worker {id} got a job; executing.");
+                    job();
+                }
+                Err(_) => {
+                    println!("Worker has been disconnected");
+                    break;
+                }
+            }
         });
         Worker {
             id,
@@ -32,11 +39,12 @@ impl Worker {
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: Option<mpsc::Sender<Job>>,
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        drop(self.sender.take()); // drop the sender such that the thread don't loop forever
         for worker in &mut self.workers {
             println!("Shutting down worker: {}", worker.id);
             if let Some(thread) = worker.thread.take() {
@@ -67,7 +75,10 @@ impl ThreadPool {
             // create some vector here
             workers.push(Worker::new(id, Arc::clone(&reciever))); // pass allong the reciever such that the boys can acces the Job
         }
-        ThreadPool { workers, sender }
+        ThreadPool {
+            workers,
+            sender: Some(sender),
+        }
     }
 
     // create the execute function which accepts a closure therefor we need to implement the trati fn fnonce fnmut
@@ -76,6 +87,6 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.as_ref().unwrap().send(job).unwrap();
     }
 }
